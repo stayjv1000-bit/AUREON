@@ -1,90 +1,110 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "BinaryData.h"
 
 namespace
 {
-class BasicPianoVoice final : public juce::SynthesiserVoice
-{
-public:
-    bool canPlaySound(juce::SynthesiserSound* sound) override
-    {
-        return dynamic_cast<juce::SynthesiserSound*>(sound) != nullptr;
-    }
-    void startNote(int midiNote, float velocity, juce::SynthesiserSound*, int) override
-    {
-        frequency = juce::MidiMessage::getMidiNoteInHertz(midiNote);
-        level = velocity * 0.12f;
-        phase = 0.0;
-        release = false;
-        envelope = 0.0f;
-    }
-    void stopNote(float, bool allowTailOff) override
-    {
-        if (allowTailOff) release = true;
-        else clearCurrentNote();
-    }
-    void pitchWheelMoved(int) override {}
-    void controllerMoved(int, int) override {}
-    void renderNextBlock(juce::AudioBuffer<float>& output, int start, int count) override
-    {
-        if (!isVoiceActive()) return;
-        const auto sr = getSampleRate();
-        if (sr <= 0.0) return;
-        for (int i = 0; i < count; ++i)
-        {
-            envelope += release ? -0.0007f : 0.0035f;
-            envelope = juce::jlimit(0.0f, 1.0f, envelope);
-            if (release && envelope <= 0.0001f) { clearCurrentNote(); break; }
-            const auto sample = static_cast<float>(std::sin(phase) * level * envelope);
-            phase += juce::MathConstants<double>::twoPi * frequency / sr;
-            if (phase >= juce::MathConstants<double>::twoPi) phase -= juce::MathConstants<double>::twoPi;
-            for (int channel = 0; channel < output.getNumChannels(); ++channel)
-                output.addSample(channel, start + i, sample);
-        }
-    }
-private:
-    double frequency = 440.0, phase = 0.0;
-    float level = 0.0f, envelope = 0.0f;
-    bool release = false;
-};
-
-class BasicPianoSound final : public juce::SynthesiserSound
-{
-public:
-    bool appliesToNote(int) override { return true; }
-    bool appliesToChannel(int) override { return true; }
-};
+constexpr int firstMidiChannel = 0;
+constexpr int lastMidiChannel = 15;
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout AureonAudioProcessor::createParameterLayout()
 {
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
-    params.push_back(std::make_unique<juce::AudioParameterFloat>("master", "Master", juce::NormalisableRange<float>(0.0f, 1.0f), 0.8f));
-    params.push_back(std::make_unique<juce::AudioParameterFloat>("brightness", "Brightness", juce::NormalisableRange<float>(0.0f, 1.0f), 0.5f));
-    params.push_back(std::make_unique<juce::AudioParameterFloat>("reverb", "Reverb", juce::NormalisableRange<float>(0.0f, 1.0f), 0.18f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "master", "Master", juce::NormalisableRange<float>(0.0f, 1.0f), 0.8f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "brightness", "Brightness", juce::NormalisableRange<float>(0.0f, 1.0f), 0.5f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "reverb", "Reverb", juce::NormalisableRange<float>(0.0f, 1.0f), 0.22f));
     return { params.begin(), params.end() };
 }
 
 AureonAudioProcessor::AureonAudioProcessor()
- : AudioProcessor(BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true)),
-   parameters(*this, nullptr, "AUREON_STATE", createParameterLayout())
+    : AudioProcessor(BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true)),
+      parameters(*this, nullptr, "AUREON_STATE", createParameterLayout())
 {
-    for (int i = 0; i < 16; ++i) synth.addVoice(new BasicPianoVoice());
-    synth.addSound(new BasicPianoSound());
+}
+
+AureonAudioProcessor::~AureonAudioProcessor()
+{
+    if (fluidSynth != nullptr)
+        delete_fluid_synth(fluidSynth);
+    if (fluidSettings != nullptr)
+        delete_fluid_settings(fluidSettings);
+}
+
+bool AureonAudioProcessor::loadEmbeddedSoundFont()
+{
+    const auto appData = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+                             .getChildFile("AUREON");
+    if (!appData.createDirectory())
+        return false;
+
+    const auto soundFontFile = appData.getChildFile("GeneralUser_GS.sf2");
+    const auto licenseFile = appData.getChildFile("GeneralUser_GS_LICENSE.txt");
+
+    if (!soundFontFile.existsAsFile()
+        || soundFontFile.getSize() != static_cast<juce::int64>(BinaryData::GeneralUser_GS_sf2Size))
+    {
+        if (!soundFontFile.replaceWithData(BinaryData::GeneralUser_GS_sf2,
+                                           static_cast<size_t>(BinaryData::GeneralUser_GS_sf2Size)))
+            return false;
+    }
+
+    if (!licenseFile.existsAsFile()
+        || licenseFile.getSize() != static_cast<juce::int64>(BinaryData::GeneralUser_GS_LICENSE_txtSize))
+    {
+        licenseFile.replaceWithData(BinaryData::GeneralUser_GS_LICENSE_txt,
+                                    static_cast<size_t>(BinaryData::GeneralUser_GS_LICENSE_txtSize));
+    }
+
+    fluidSettings = new_fluid_settings();
+    if (fluidSettings == nullptr)
+        return false;
+
+    fluid_settings_setnum(fluidSettings, "synth.sample-rate", getSampleRate());
+    fluid_settings_setnum(fluidSettings, "synth.gain", 0.65);
+    fluid_settings_setint(fluidSettings, "synth.polyphony", 256);
+    fluid_settings_setint(fluidSettings, "synth.reverb.active", 1);
+    fluid_settings_setint(fluidSettings, "synth.chorus.active", 1);
+
+    fluidSynth = new_fluid_synth(fluidSettings);
+    if (fluidSynth == nullptr)
+        return false;
+
+    soundFontId = fluid_synth_sfload(fluidSynth, soundFontFile.getFullPathName().toRawUTF8(), 1);
+    if (soundFontId < 0)
+        return false;
+
+    // General MIDI bank 0, preset 0 is the acoustic Grand Piano.
+    return fluid_synth_program_select(fluidSynth, 0, soundFontId, 0, 0) == FLUID_OK;
 }
 
 void AureonAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
-    synth.setCurrentPlaybackSampleRate(sampleRate);
+    if (fluidSynth != nullptr)
+    {
+        delete_fluid_synth(fluidSynth);
+        fluidSynth = nullptr;
+    }
+    if (fluidSettings != nullptr)
+    {
+        delete_fluid_settings(fluidSettings);
+        fluidSettings = nullptr;
+    }
 
-    juce::ignoreUnused(samplesPerBlock);
-    reverb.setSampleRate(sampleRate);
-    reverb.reset();
+    leftScratch.assign(static_cast<size_t>(juce::jmax(1, samplesPerBlock)), 0.0f);
+    rightScratch.assign(static_cast<size_t>(juce::jmax(1, samplesPerBlock)), 0.0f);
+
+    loadEmbeddedSoundFont();
+    juce::ignoreUnused(sampleRate);
 }
 
 void AureonAudioProcessor::releaseResources()
 {
-    reverb.reset();
+    if (fluidSynth != nullptr)
+        fluid_synth_system_reset(fluidSynth);
 }
 
 bool AureonAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
@@ -97,23 +117,82 @@ void AureonAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
 {
     juce::ScopedNoDenormals noDenormals;
     buffer.clear();
-    synth.renderNextBlock(buffer, midi, 0, buffer.getNumSamples());
 
-    const auto gain = parameters.getRawParameterValue("master")->load();
-    buffer.applyGain(gain);
+    if (fluidSynth == nullptr)
+        return;
 
-    juce::Reverb::Parameters rp;
-    rp.roomSize = 0.55f;
-    rp.damping = 0.45f;
-    rp.wetLevel = parameters.getRawParameterValue("reverb")->load() * 0.5f;
-    rp.dryLevel = 1.0f - rp.wetLevel * 0.35f;
-    rp.width = 1.0f;
-    reverb.setParameters(rp);
+    const auto master = parameters.getRawParameterValue("master")->load();
+    const auto brightness = juce::roundToInt(parameters.getRawParameterValue("brightness")->load() * 127.0f);
+    const auto reverbSend = juce::roundToInt(parameters.getRawParameterValue("reverb")->load() * 127.0f);
 
-    if (buffer.getNumChannels() >= 2)
-        reverb.processStereo(buffer.getWritePointer(0), buffer.getWritePointer(1), buffer.getNumSamples());
-    else if (buffer.getNumChannels() == 1)
-        reverb.processMono(buffer.getWritePointer(0), buffer.getNumSamples());
+    for (int channel = firstMidiChannel; channel <= lastMidiChannel; ++channel)
+    {
+        fluid_synth_cc(fluidSynth, channel, 74, brightness);
+        fluid_synth_cc(fluidSynth, channel, 91, reverbSend);
+    }
+
+    const auto numSamples = buffer.getNumSamples();
+    const auto numChannels = buffer.getNumChannels();
+    const auto scratchSize = static_cast<int>(leftScratch.size());
+
+    auto renderSegment = [&](int start, int length)
+    {
+        int rendered = 0;
+        while (rendered < length)
+        {
+            const auto chunk = juce::jmin(length - rendered, scratchSize);
+            if (fluid_synth_write_float(fluidSynth, chunk,
+                                        leftScratch.data(), 0, 1,
+                                        rightScratch.data(), 0, 1) != FLUID_OK)
+                break;
+
+            for (int i = 0; i < chunk; ++i)
+            {
+                const auto destination = start + rendered + i;
+                if (numChannels >= 2)
+                {
+                    buffer.addSample(0, destination, leftScratch[static_cast<size_t>(i)]);
+                    buffer.addSample(1, destination, rightScratch[static_cast<size_t>(i)]);
+                }
+                else if (numChannels == 1)
+                {
+                    const auto mono = 0.5f * (leftScratch[static_cast<size_t>(i)]
+                                            + rightScratch[static_cast<size_t>(i)]);
+                    buffer.addSample(0, destination, mono);
+                }
+            }
+            rendered += chunk;
+        }
+    };
+
+    int cursor = 0;
+    for (const auto metadata : midi)
+    {
+        const auto eventPosition = juce::jlimit(cursor, numSamples, metadata.samplePosition);
+        renderSegment(cursor, eventPosition - cursor);
+        cursor = eventPosition;
+
+        const auto message = metadata.getMessage();
+        const auto channel = juce::jlimit(0, 15, message.getChannel() - 1);
+
+        if (message.isNoteOn())
+            fluid_synth_noteon(fluidSynth, channel, message.getNoteNumber(), message.getVelocity());
+        else if (message.isNoteOff())
+            fluid_synth_noteoff(fluidSynth, channel, message.getNoteNumber());
+        else if (message.isController())
+            fluid_synth_cc(fluidSynth, channel, message.getControllerNumber(), message.getControllerValue());
+        else if (message.isProgramChange())
+            fluid_synth_program_change(fluidSynth, channel, message.getProgramChangeNumber());
+        else if (message.isPitchWheel())
+            fluid_synth_pitch_bend(fluidSynth, channel, message.getPitchWheelValue());
+        else if (message.isAllNotesOff())
+            fluid_synth_cc(fluidSynth, channel, 123, 0);
+        else if (message.isAllSoundOff())
+            fluid_synth_cc(fluidSynth, channel, 120, 0);
+    }
+
+    renderSegment(cursor, numSamples - cursor);
+    buffer.applyGain(master);
 }
 
 juce::AudioProcessorEditor* AureonAudioProcessor::createEditor()
