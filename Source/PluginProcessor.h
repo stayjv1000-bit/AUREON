@@ -6,10 +6,12 @@ class AureonAudioProcessor final : public juce::AudioProcessor
 public:
     AureonAudioProcessor();
     ~AureonAudioProcessor() override = default;
+
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
-    void releaseResources() override;
+    void releaseResources() override {}
     bool isBusesLayoutSupported(const BusesLayout& layouts) const override;
     void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
     const juce::String getName() const override { return "AUREON"; }
@@ -24,10 +26,15 @@ public:
     void changeProgramName(int, const juce::String&) override {}
     void getStateInformation(juce::MemoryBlock&) override;
     void setStateInformation(const void*, int) override;
+
     juce::AudioProcessorValueTreeState parameters;
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
+
 private:
-    juce::Synthesiser synth;
+    struct VoiceState { double phase = 0.0; float envelope = 0.0f; float velocity = 0.0f; bool held = false; };
+    std::array<VoiceState, 128> voices {};
+    double currentSampleRate = 44100.0;
+    juce::dsp::StateVariableTPTFilter<float> toneFilter;
     juce::dsp::Reverb reverb;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AureonAudioProcessor)
 };
