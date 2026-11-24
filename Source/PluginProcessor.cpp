@@ -73,13 +73,22 @@ AureonAudioProcessor::AureonAudioProcessor()
     synth.addSound(new BasicPianoSound());
 }
 
-void AureonAudioProcessor::prepareToPlay(double sampleRate, int)
+void AureonAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     synth.setCurrentPlaybackSampleRate(sampleRate);
-    juce::ignoreUnused(sampleRate);
+
+    juce::dsp::ProcessSpec spec;
+    spec.sampleRate = sampleRate;
+    spec.maximumBlockSize = static_cast<juce::uint32>(samplesPerBlock);
+    spec.numChannels = static_cast<juce::uint32>(getTotalNumOutputChannels());
+    reverb.prepare(spec);
+    reverb.reset();
 }
 
-void AureonAudioProcessor::releaseResources() {}
+void AureonAudioProcessor::releaseResources()
+{
+    reverb.reset();
+}
 
 bool AureonAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
 {
@@ -92,8 +101,10 @@ void AureonAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
     juce::ScopedNoDenormals noDenormals;
     buffer.clear();
     synth.renderNextBlock(buffer, midi, 0, buffer.getNumSamples());
+
     const auto gain = parameters.getRawParameterValue("master")->load();
     buffer.applyGain(gain);
+
     juce::dsp::Reverb::Parameters rp;
     rp.roomSize = 0.55f;
     rp.damping = 0.45f;
@@ -101,8 +112,10 @@ void AureonAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
     rp.dryLevel = 1.0f - rp.wetLevel * 0.35f;
     rp.width = 1.0f;
     reverb.setParameters(rp);
-    if (buffer.getNumChannels() >= 2)
-        reverb.processStereo(buffer.getWritePointer(0), buffer.getWritePointer(1), buffer.getNumSamples());
+
+    juce::dsp::AudioBlock<float> audioBlock(buffer);
+    juce::dsp::ProcessContextReplacing<float> context(audioBlock);
+    reverb.process(context);
 }
 
 juce::AudioProcessorEditor* AureonAudioProcessor::createEditor()
