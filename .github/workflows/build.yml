@@ -1,4 +1,5 @@
 name: Build AUREON
+
 on:
   push:
     branches: [ main ]
@@ -8,10 +9,15 @@ on:
 
 jobs:
   build:
+    name: ${{ matrix.os }} build
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
+        include:
+          - os: windows-latest
+            artifact: windows
+          - os: macos-latest
+            artifact: macos
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -19,3 +25,12 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build
         run: cmake --build build --config Release --parallel 2
+      - name: Upload build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: AUREON-${{ matrix.artifact }}
+          path: |
+            build/**/AUREON*.vst3
+            build/**/AUREON*.app
+            build/**/AUREON*.exe
+          if-no-files-found: warn
