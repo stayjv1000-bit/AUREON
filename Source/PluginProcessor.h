@@ -8,7 +8,7 @@ public:
     ~AureonAudioProcessor() override = default;
 
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
-    void releaseResources() override {}
+    void releaseResources() override;
     bool isBusesLayoutSupported(const BusesLayout& layouts) const override;
     void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
 
@@ -31,10 +31,7 @@ public:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
 private:
-    struct VoiceState { double phase = 0.0; float envelope = 0.0f; float velocity = 0.0f; bool held = false; };
-    std::array<VoiceState, 128> voices {};
-    double currentSampleRate = 44100.0;
-    juce::dsp::StateVariableTPTFilter<float> toneFilter;
-    juce::dsp::Reverb reverb;
+    juce::Synthesiser synth;
+    juce::Reverb reverb;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AureonAudioProcessor)
 };
