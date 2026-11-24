@@ -1,12 +1,15 @@
-# Sample library status
+# Piano SoundFont status
 
-The current prototype does not contain a sampled acoustic piano. Its temporary test voice is a simple synthesized tone used only to validate MIDI-to-audio routing and plugin integration.
+The development branch now integrates FluidSynth and embeds GeneralUser GS v2.0.3 during CMake configuration.
 
-A production piano library should include:
-- Recorded notes across the playable keyboard range
-- Multiple velocity layers per note
-- Carefully edited loop and tail regions
-- Release samples and pedal behavior where appropriate
-- Clear licensing and attribution for every recording
+- Default preset: General MIDI bank 0, program 0 (Acoustic Grand Piano)
+- MIDI: note on/off, sustain and other CC messages, program changes, pitch bend
+- Controls: master level, brightness (CC 74), reverb send (CC 91)
+- The SoundFont is pinned to a specific upstream revision and SHA-256 verified before it is embedded.
+- The SoundFont's license is embedded alongside it and copied to the user's AUREON application-data folder on first load.
 
-Do not copy samples from Keyzone Classic or another commercial instrument. Only add recordings you own or have explicit permission to distribute.
+Attribution: GeneralUser GS by S. Christian Collins — https://www.schristiancollins.com/generaluser.php
+
+Important licensing note: the author permits software use and redistribution under the included license, but notes that the complete provenance of some samples cannot be independently guaranteed. The license must remain available with distributed copies.
+
+This integration is not considered release-ready until Windows and macOS CI builds pass and the resulting plugin is tested with real MIDI input and audible output in REAPER.
