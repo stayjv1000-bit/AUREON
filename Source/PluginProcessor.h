@@ -28,6 +28,6 @@ public:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 private:
     juce::Synthesiser synth;
-    juce::dsp::Reverb reverb;
+    juce::Reverb reverb;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AureonAudioProcessor)
 };
