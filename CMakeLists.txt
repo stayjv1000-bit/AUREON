@@ -13,6 +13,7 @@ FetchContent_MakeAvailable(JUCE)
 
 # Build FluidSynth into the plugin so users do not need a separate installation.
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(enable-floats ON CACHE BOOL "" FORCE)
 set(enable-alsa OFF CACHE BOOL "" FORCE)
 set(enable-aufile OFF CACHE BOOL "" FORCE)
