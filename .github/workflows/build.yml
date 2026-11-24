@@ -1,9 +1,10 @@
 name: Build AUREON
+
 on:
   push:
-    branches: [ main ]
+    branches: [ main, feature/soundfont-piano-engine ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, fix/reverb-dsp-processing ]
   workflow_dispatch:
 
 jobs:
@@ -15,7 +16,17 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
       - name: Build
         run: cmake --build build --config Release --parallel 2
+
+      - name: Upload VST3
+        uses: actions/upload-artifact@v4
+        with:
+          name: AUREON-${{ runner.os }}-VST3
+          path: build/AUREON_artefacts/Release/VST3/AUREON.vst3
+          if-no-files-found: error
+          retention-days: 14
